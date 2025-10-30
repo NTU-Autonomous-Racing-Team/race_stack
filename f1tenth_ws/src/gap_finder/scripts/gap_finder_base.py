@@ -16,6 +16,43 @@ from pid import PID
 # reference: https://github.com/f1tenth/f1tenth_labs_openrepo/blob/main/f1tenth_lab4/README.md
 # reference: https://www.nathanotterness.com/2019/04/the-disparity-extender-algorithm-and.html 
 
+config = {
+            "disparity_bubble_diameter": 0.4, 
+            "safety_bubble_diameter": 0.4, 
+            "front_bubble_diameter": 0.33, 
+            "minimum_bubble_diameter": 0.33, 
+            "view_angle": 3.142, 
+            "coefficient_of_friction": 0.71, 
+            "disparity_threshold": 0.6, 
+            "lookahead_distance": 10, 
+            "speed_kp": 1.0, 
+            "steering_kp": 1.2, 
+            "wheel_base": 0.324, 
+            "speed_min": 1.0, 
+            "speed_max": 10.0, 
+            "steering_max": 0.5,
+            "speed_low_pass_filter": 0.8, 
+            "steering_low_pass_filter": 0.8, 
+            "bin_number": 7,
+            # Turn ON or OFF features
+            "do_limit_lookahead": True, 
+            "do_prioritise_center": True, 
+            "do_mark_disparity": True, 
+            "do_limit_field_of_view": True, 
+            "do_mark_minimum": True, 
+            "do_mark_sides": False, 
+            "do_min_filter": False, 
+            "do_bin_speed": False, 
+            "do_speed_low_pass_filter": False, 
+            "do_steering_low_pass_filter": False, 
+            "do_visualise": False,
+            # ROS PARAMS
+            "drive_pub_hz": 50, 
+            "scan_topic": "scan", 
+            "drive_topic": "drive"
+        }
+            
+
 class GapFinderAlgorithm:
     """
     This class implements the gap finder algorithm. The algorithm takes in a list of ranges from a LiDAR scan and
@@ -25,7 +62,7 @@ class GapFinderAlgorithm:
         - view_angle: the angle of the field of view of the LiDAR as a cone in front of the car
         - coeffiecient_of_friction: the coeffiecient of friction of the car used for speed calculation
         - disparity_threshold: the threshold for marking a disparity in the scan i.e. an edge
-        - lookahead : the maximum distance to look ahead in the scan i.e ranges more than this are set to this value
+        - lookahead_distance : the maximum distance to look ahead in the scan i.e ranges more than this are set to this value
         - speed_kp: the proportional gain for the speed PID controller
         - steering_kp: the proportional gain for the steering PID controller
         - wheel_base: the distance between the front and rear axles of the car
@@ -39,7 +76,7 @@ class GapFinderAlgorithm:
                         view_angle = 3.142, 
                         coeffiecient_of_friction = 0.71, 
                         disparity_threshold = 0.6,
-                        lookahead = None, 
+                        lookahead_distance = None, 
                         speed_kp = 1.0,
                         steering_kp = 1.2,
                         wheel_base = 0.324, 
@@ -47,8 +84,19 @@ class GapFinderAlgorithm:
                         speed_min = 1.0, 
                         speed_low_pass_filter = 0.8,
                         steering_low_pass_filter = 0.8,
-                        visualise = False, 
-                        bin_number = 7):
+                        do_visualise = False, 
+                        bin_number = 7, 
+                        # Turning ON or OFF features
+                        do_limit_lookahead = True, 
+                        do_mark_disparity = True, 
+                        do_mark_minimum = True, 
+                        do_limit_field_of_view = True, 
+                        do_prioritise_center = True, 
+                        do_mark_sides = False, 
+                        do_min_filter = False, 
+                        do_bin_speed = False, 
+                        do_speed_low_pass_filter = False, 
+                        do_steering_low_pass_filter = False):
         # Tunable Parameters
         self.disparity_bubble_diameter = disparity_bubble_diameter  # [m]
         self.safety_bubble_diameter = safety_bubble_diameter  # [m]
@@ -56,7 +104,7 @@ class GapFinderAlgorithm:
         self.minimum_bubble_diameter = minimum_bubble_diameter
         self.view_angle = view_angle  # [rad]
         self.coeffiecient_of_friction = coeffiecient_of_friction
-        self.lookahead = lookahead # [m]
+        self.lookahead_distance = lookahead_distance # [m]
         self.disparity_threshold = disparity_threshold # [m]
         self.wheel_base = wheel_base  # [m]
         self.speed_max = speed_max  # [m/s]
@@ -71,16 +119,18 @@ class GapFinderAlgorithm:
         self.steering_pid = PID(Kp=-steering_kp)
         self.steering_pid.set_point = 0.0
         # Feature Activation
-        self.do_mark_sides = True
-        self.do_min_filter = True
-        self.do_limit_lookahead = True
-        self.do_mark_disparity = True
-        self.do_mark_minimum = True
-        self.do_bin_speed = True
-        self.do_speed_low_pass_filter = True
-        self.do_steering_low_pass_filter = True
+        self.do_mark_sides = do_mark_sides
+        self.do_min_filter = do_min_filter
+        self.do_limit_lookahead = do_limit_lookahead
+        self.do_mark_disparity = do_mark_disparity
+        self.do_mark_minimum = do_mark_minimum
+        self.do_bin_speed = do_bin_speed
+        self.do_speed_low_pass_filter = do_speed_low_pass_filter
+        self.do_steering_low_pass_filter = do_steering_low_pass_filter
+        self.do_limit_field_of_view = do_limit_field_of_view
+        self.do_prioritise_center = do_prioritise_center
         # Visualisation
-        self.visualise = visualise
+        self.do_visualise = do_visualise
         self.safety_markers = {"range":[0.0], "bearing":[0.0]}
         self.goal_marker = {"range":0.0, "bearing":0.0}
         # Internal Variables
@@ -95,10 +145,10 @@ class GapFinderAlgorithm:
         ranges = np.array(scan_msg.ranges)
         angle_increment = scan_msg.angle_increment
 
+        ### INITIALISE ###
         if self.initialise:
-            # lookahead
-            if self.lookahead is None:
-                self.lookahead = scan_msg.range_max
+            if self.lookahead_distance is None:
+                self.lookahead_distance = scan_msg.range_max
             # middle index for front of car
             self.middle_index = ranges.shape[0]//2
             # field of view bounds
@@ -115,21 +165,15 @@ class GapFinderAlgorithm:
             self.initialise = False
  
         ### LIMIT LOOKAHEAD ##
+        # i.e. scan data in clipped to lookahead distance
         if (self.do_limit_lookahead):
-            ranges[ranges > self.lookahead] = self.lookahead
-            modified_ranges = ranges.copy()
+            ranges[ranges > self.lookahead_distance] = self.lookahead_distance
         else :
-            modified_ranges = ranges.copy()
-            self.lookahead = scan_msg.range_max
-
-        ### FIND FRONT CLEARANCE ###
-        front_clearance = ranges[self.middle_index] # single laser scan
-        if front_clearance != 0.0: # mean of safety bubble of front scan
-            arc = angle_increment * ranges[self.middle_index]
-            radius_count = int(self.front_bubble_diameter/arc/2)
-            front_clearance = np.mean(ranges[self.middle_index-radius_count:self.middle_index+radius_count])
+            self.lookahead_distance = scan_msg.range_max
+        modified_ranges = ranges.copy()
 
         ### MIN FILTER ###
+        # each scan datapoint is clipped to the nearest neighbour within a safety bubble
         if (self.do_min_filter):
             for i, r in enumerate(ranges):
                 arc = angle_increment * r
@@ -143,11 +187,13 @@ class GapFinderAlgorithm:
                 modified_ranges[i] = the_min
 
         ### LIMIT FIELD OF VIEW ###
-        limited_ranges = modified_ranges[self.fov_bounds[0]:self.fov_bounds[1]]
-        limited_modified_ranges = modified_ranges[self.fov_bounds[0]:self.fov_bounds[1]]
+        # i.e. limits the car to a view angle infront of the car.
+        if (self.do_limit_field_of_view):
+            limited_ranges = modified_ranges[self.fov_bounds[0]:self.fov_bounds[1]]
+            limited_modified_ranges = modified_ranges[self.fov_bounds[0]:self.fov_bounds[1]]
 
-        marked_indexes = []
         ### MARK LARGE DISPARITY###
+        marked_indexes = []
         if (self.do_mark_disparity):
             for i in range(1, limited_ranges.shape[0]):
                 if abs(limited_ranges[i] - limited_ranges[i-1]) > self.disparity_threshold:
@@ -164,35 +210,43 @@ class GapFinderAlgorithm:
                     marked_point = [lower_bound, upper_bound, r]
                     marked_indexes.append(marked_point)
 
-        ### MARK MINIMUM ###
+        ### MARK NEAREST SCAN ###
         if (self.do_mark_minimum):
             r = np.min(limited_ranges)
             i = np.argmin(limited_ranges)
-            arc = angle_increment * i_range[1]
+            arc = angle_increment * r
             radius_count = int(self.safety_bubble_diameter/arc/2)
             lower_bound = i-radius_count 
             upper_bound = i+radius_count+1
             marked_point = [lower_bound, upper_bound, r]
             marked_indexes.append(marked_point)
         
-        ### APPLY MARKS ###
+        ### APPLY SAFETY BUBBLE TO MARKED INDEXES ###
         for mark_point in marked_indexes:
             limited_modified_ranges[mark_point[0]:mark_point[1]] = mark_point[2]
 
         ### PRIORITISE CENTER OF SCAN ###
-        limited_modified_ranges *= self.center_priority_mask
+        if (self.do_prioritise_center):
+            limited_modified_ranges *= self.center_priority_mask
 
         ### FIND DEEPEST GAP ###
         max_gap_index = np.argmax(limited_modified_ranges)
         goal_bearing = angle_increment * (max_gap_index - limited_ranges.shape[0] // 2)
+
+        ### FIND FRONT CLEARANCE ###
+        front_clearance = ranges[self.middle_index] # single laser scan
+        if front_clearance != 0.0: # mean of safety bubble of front scan
+            arc = angle_increment * ranges[self.middle_index]
+            radius_count = int(self.front_bubble_diameter/arc/2)
+            front_clearance = np.mean(ranges[self.middle_index-radius_count:self.middle_index+radius_count])
 
         ### FIND TWIST ###
         init_steering = np.arctan(goal_bearing * self.wheel_base) # using ackermann steering model
         steering = self.steering_pid.update(init_steering)
 
         # init_speed = np.sqrt(10 * self.coeffiecient_of_friction * self.wheel_base / np.abs(max(np.tan(abs(steering)),1e-16)))
-        # init_speed = front_clearance/self.lookahead * min(init_speed, self.speed_max)
-        init_speed = front_clearance/self.lookahead * self.speed_max
+        # init_speed = front_clearance/self.lookahead_distance * min(init_speed, self.speed_max)
+        init_speed = front_clearance/self.lookahead_distance * self.speed_max
         speed = self.speed_pid.update(init_speed)
 
         ### BIN SPEED ###
@@ -215,7 +269,7 @@ class GapFinderAlgorithm:
         ackermann = {"speed": speed, "steering": steering}
 
         ### VISUALISATION ###
-        if self.visualise:
+        if self.do_visualise:
             # Visualise Modified Ranges
             self.safety_scan_msg = scan_msg
             scan_msg.ranges = modified_ranges.tolist()
@@ -260,40 +314,38 @@ class GapFinderNode(Node):
     """
     def __init__(self):
         ### ROS2 PARAMETERS ###
-        self.hz = 50.0 # [Hz]
+        self.hz = config["drive_pub_hz"] # [Hz]
         self.timeout = 1.0 # [s]
-        self.visualise = True
-        scan_topic = "scan"
+        self.visualise = config["do_visualise"]
+        scan_topic = config["scan_topic"]
         # drive_topic = "/nav/drive"
-        drive_topic = "drive"
+        drive_topic = config["drive_topic"]
 
         ### SPEED AND STEERING LIMITS ###
         # Speed limits
-        self.max_speed = 10.0 # [m/s]
-        self.min_speed = 1.0 # [m/s]        
+        self.max_speed = config["speed_max"] # [m/s]
+        self.min_speed = config["speed_min"] # [m/s]        
         # Acceleration limits
         self.max_acceleration = None # [m/s^2]
         # Steering limits
-        self.max_steering = 0.5 # [rad]
+        self.max_steering = config["steering_max"] # [rad]
 
         ### GAP FINDER ALGORITHM ###
-        self.gapFinderAlgorithm = GapFinderAlgorithm(   disparity_bubble_diameter = 0.4, 
-                                                        safety_bubble_diameter = 0.4,
-                                                        front_bubble_diameter = 0.33,
-                                                        minimum_bubble_diameter = 0.33,
-                                                        view_angle = 3.142, 
-                                                        coeffiecient_of_friction = 0.71, 
-                                                        disparity_threshold = 0.6,
-                                                        lookahead = None, 
-                                                        speed_kp = 1.0,
-                                                        steering_kp = 1.2,
-                                                        wheel_base = 0.324, 
-                                                        speed_max = 10.0,
-                                                        speed_min = 1.0, 
-                                                        speed_low_pass_filter = 0.8,
-                                                        steering_low_pass_filter = 0.8,
-                                                        visualise = False, 
-                                                        bin_number = 7)
+        self.gapFinderAlgorithm = GapFinderAlgorithm(   disparity_bubble_diameter = config["disparity_bubble_diameter"], 
+                                                        safety_bubble_diameter = config["safety_bubble_diameter"],
+                                                        front_bubble_diameter = config["front_bubble_diameter"],
+                                                        minimum_bubble_diameter = config["minimum_bubble_diameter"],
+                                                        view_angle = config["view_angle"], 
+                                                        coeffiecient_of_friction = config["view_angle"], 
+                                                        disparity_threshold = config["disparity_threshold"],
+                                                        lookahead_distance = config["lookahead_distance"], 
+                                                        speed_kp = config["speed_kp"],
+                                                        steering_kp = config["steering_kp"],
+                                                        wheel_base = config["wheel_base"], 
+                                                        speed_max = config["speed_max"],
+                                                        speed_min = config["speed_min"], 
+                                                        do_visualise = config["do_visualise"], #only works in sim 
+                                                    )
 
         ### ROS2 NODE ###
         super().__init__("gap_finder")
@@ -366,7 +418,7 @@ class GapFinderNode(Node):
 
         for i, coord in enumerate(bubble_coord):
             self.bubble_viz_msg = Marker()
-            self.bubble_viz_msg.header.frame_id = "/base_link"
+            self.bubble_viz_msg.header.frame_id = "ego_racecar/base_link"
             self.bubble_viz_msg.color.a = 1.0
             self.bubble_viz_msg.color.r = 1.0
             self.bubble_viz_msg.scale.x = self.gapFinderAlgorithm.disparity_bubble_diameter
