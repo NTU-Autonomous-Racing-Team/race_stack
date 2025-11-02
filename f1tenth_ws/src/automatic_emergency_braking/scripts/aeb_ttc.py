@@ -14,9 +14,9 @@ config = {
     'time_threshold': 0.1, # [s]
     'view_angle': 1.0, # [radians]
     'pub_rate': 10, # [Hz]
-    'drive_topic': '/drive',
-    'scan_topic': '/scan',
-    'odom_topic': '/odom'
+    'aeb_topic': 'aeb',
+    'scan_topic': 'scan',
+    'odom_topic': 'odom'
 }
 
 class TimeToCollision_Algorithm():
@@ -60,7 +60,7 @@ class AutomaticEmergencyBrakingNode(Node):
             # view_angle_increment will be set on first scan callback
         )
         # TTC Publisher
-        self.aeb_publisher = self.create_publisher(Float32, config['drive_topic'], 1)
+        self.aeb_publisher = self.create_publisher(Float32, config['aeb_topic'], 1)
         self.timer = self.create_timer(1/config['pub_rate'], self.timer_callback)
 
         self.scan_waiting = True

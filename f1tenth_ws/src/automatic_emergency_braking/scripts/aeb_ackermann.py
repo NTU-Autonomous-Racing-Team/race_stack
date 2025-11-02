@@ -17,9 +17,9 @@ config = {
     'wheelbase': 0.25,
     'view_angle': 3.142/2.0, 
     'pub_rate': 10, 
-    'drive_topic': '/drive',
-    'scan_topic': '/scan',
-    'odom_topic': '/odom'
+    'aeb_topic': 'aeb',
+    'scan_topic': 'scan',
+    'odom_topic': 'odom'
 }
 
 class AEB_Ackerman():
@@ -94,7 +94,7 @@ class AutomaticEmergencyBrakingNode(Node):
         self.odom_subscriber = self.create_subscription(Odometry, config['odom_topic'], self.odom_callback, 1)
         self.odom_subscriber
         # AEB Publisher
-        self.aeb_publisher = self.create_publisher(AckermannDriveStamped, config['drive_topic'], 1)
+        self.aeb_publisher = self.create_publisher(AckermannDriveStamped, config['aeb_topic'], 1)
         self.timer = self.create_timer(1/config['pub_rate'], self.timer_callback)
         # AEB Algorithm
         self.aeb = AEB_Ackerman(
