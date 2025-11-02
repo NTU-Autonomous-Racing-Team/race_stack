@@ -121,6 +121,7 @@ class AutomaticEmergencyBrakingNode(Node):
             return
         drive_msg = AckermannDriveStamped()
         if (self.aeb.update(self.scan_msg, self.odom_msg)):
+            self.get_logger().info('AEB Activated: Stopping Vehicle')
             self.aeb_publisher.publish(drive_msg) # Publish zero speed message
 
 def main(args = None):
