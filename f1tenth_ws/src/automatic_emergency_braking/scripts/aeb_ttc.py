@@ -16,7 +16,7 @@ config = {
     'pub_rate': 10, # [Hz]
     'drive_topic': '/drive',
     'scan_topic': '/scan',
-    'odom_topic': '/odom',
+    'odom_topic': '/odom'
 }
 
 class TimeToCollision_Algorithm():
