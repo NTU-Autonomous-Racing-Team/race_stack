@@ -30,7 +30,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 # Install Python executables
 install(PROGRAMS
-  scripts/aeb_base.py
+  scripts/aeb_ttc.py
   scripts/aeb_ackermann.py
   DESTINATION lib/${PROJECT_NAME}
 )

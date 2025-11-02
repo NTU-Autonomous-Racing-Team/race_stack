@@ -10,10 +10,20 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Int32
 
-# source 
+config = {
+    'safety_bubble_diameter': 0.4,
+    'frictional_coefficient': 0.7, # carpet ~ 0.6-0.8 from https://www.jstage.jst.go.jp/article/jte2000/47/2/47_2_53/_pdf/-char/ja, https://www.engineeringtoolbox.com/friction-coefficients-d_778.html, 
+    'max_steering_angle': 0.34,
+    'wheelbase': 0.25,
+    'view_angle': 3.142/2.0, 
+    'pub_rate': 10, 
+    'drive_topic': '/drive',
+    'scan_topic': '/scan',
+    'odom_topic': '/odom'
+}
 
 class AEB_Ackerman():
-    def __init__(self, SAFETY_BUBBLE_DIAMETER = 0.3, 
+    def __init__(self, safety_bubble_diameter = 0.3, 
                  frictional_coefficient = 3.0, 
                  max_steering_angle = 0.8,
                  wheelbase = 0.33,
@@ -21,7 +31,7 @@ class AEB_Ackerman():
         # CONSTANTS
         self.G = 9.81
         # TUNABLE PARAMETERS
-        self.SAFETY_BUBBLE_DIAMETER = SAFETY_BUBBLE_DIAMETER # Estimated as the length of the car
+        self.safety_bubble_diameter = safety_bubble_diameter # Estimated as the length of the car
         self.FRICTIONAL_COEFFICIENT = frictional_coefficient
         self.MAX_STEERING_ANGLE = max_steering_angle
         self.WHEELBASE = wheelbase
@@ -54,7 +64,7 @@ class AEB_Ackerman():
         if instantaneous_rotation_radius < grip_limited_radius:
             instantaneous_rotation_radius = grip_limited_radius
 
-        # Calculate ICR Coordinates
+        # Calculate ICR Coordinates (Instantaneous Center of Rotation)
         if nearest_coordinate_y > 0:
             # nearest point is on left, so turn right i.e. ICR is on right
             icr_coordinates = [0, -instantaneous_rotation_radius]
@@ -62,32 +72,38 @@ class AEB_Ackerman():
             # nearest point is on right, so turn left i.e. ICR is on left
             icr_coordinates = [0, instantaneous_rotation_radius]
 
-        # Calculate Distance to ICR
+        # Calculate Distance to ICR (Instantaneous Center of Rotation)
         distance = np.sqrt((nearest_coordinate_x - icr_coordinates[0])**2 + (nearest_coordinate_y - icr_coordinates[1])**2)
 
         # Check Collision
-        if abs(distance - instantaneous_rotation_radius) < self.SAFETY_BUBBLE_DIAMETER/2:
+        if abs(distance - instantaneous_rotation_radius) < self.safety_bubble_diameter/2:
             # Collision
-            return 1
+            return True
         else:
             # No Collision
-            return 0
+            return False
 
 
 class AutomaticEmergencyBrakingNode(Node):
     def __init__(self, pub_rate = 10):
-        super().__init__('AEB')
+        super().__init__('aeb_ackermann')
         # Laser Scan
-        self.scan_subscriber = self.create_subscription(LaserScan, '/scan', self.scan_callback, 1)
+        self.scan_subscriber = self.create_subscription(LaserScan, config['scan_topic'], self.scan_callback, 1)
         self.scan_subscriber
         # Odometry
-        self.odom_subscriber = self.create_subscription(Odometry, '/odom', self.odom_callback, 1)
+        self.odom_subscriber = self.create_subscription(Odometry, config['odom_topic'], self.odom_callback, 1)
         self.odom_subscriber
         # AEB Publisher
-        self.aeb_publisher = self.create_publisher(Int32, '/aeb', 1)
-        self.timer = self.create_timer(1/pub_rate, self.timer_callback)
+        self.aeb_publisher = self.create_publisher(AckermannDriveStamped, config['drive_topic'], 1)
+        self.timer = self.create_timer(1/config['pub_rate'], self.timer_callback)
         # AEB Algorithm
-        self.aeb = AEB_Ackerman()
+        self.aeb = AEB_Ackerman(
+            safety_bubble_diameter = config['safety_bubble_diameter'],
+            frictional_coefficient = config['frictional_coefficient'],
+            max_steering_angle = config['max_steering_angle'],
+            wheelbase = config['wheelbase'],
+            view_angle = config['view_angle']
+        )
         # Memory
         self.scan_waiting = True
         self.odom_waiting = True
@@ -103,9 +119,9 @@ class AutomaticEmergencyBrakingNode(Node):
     def timer_callback(self):
         if self.scan_waiting or self.odom_waiting:
             return
-        int_msg = Int32()
-        int_msg.data = self.aeb.update(self.scan_msg, self.odom_msg)
-        self.aeb_publisher.publish(int_msg)
+        drive_msg = AckermannDriveStamped()
+        if (self.aeb.update(self.scan_msg, self.odom_msg)):
+            self.aeb_publisher.publish(drive_msg) # Publish zero speed message
 
 def main(args = None):
     rclpy.init(args=args)
